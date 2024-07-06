@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkgullak_shg=self.webpackChunkgullak_shg||[]).push([[18],{7018:(s,l,e)=>{e.r(l),e.d(l,{default:()=>r});var u=e(75977),a=e(59918),h=e(70579);const r=()=>(0,h.jsx)(u.A,{children:(0,h.jsx)("div",{children:(0,h.jsx)(a.A,{})},"group_onboard")})}}]);
+//# sourceMappingURL=18.1be54afe.chunk.js.map
