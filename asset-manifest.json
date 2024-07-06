@@ -1,7 +1,7 @@
 {
   "files": {
     "main.css": "/gullak_shg/static/css/main.74c68718.css",
-    "main.js": "/gullak_shg/static/js/main.33fc7c2c.js",
+    "main.js": "/gullak_shg/static/js/main.6aea4ef9.js",
     "static/js/198.4212cea3.chunk.js": "/gullak_shg/static/js/198.4212cea3.chunk.js",
     "static/js/15.2e713238.chunk.js": "/gullak_shg/static/js/15.2e713238.chunk.js",
     "static/js/125.7752d116.chunk.js": "/gullak_shg/static/js/125.7752d116.chunk.js",
@@ -75,7 +75,7 @@
     "static/media/logo.svg": "/gullak_shg/static/media/logo.9501fe582ff106506644280b6feb111a.svg",
     "index.html": "/gullak_shg/index.html",
     "main.74c68718.css.map": "/gullak_shg/static/css/main.74c68718.css.map",
-    "main.33fc7c2c.js.map": "/gullak_shg/static/js/main.33fc7c2c.js.map",
+    "main.6aea4ef9.js.map": "/gullak_shg/static/js/main.6aea4ef9.js.map",
     "198.4212cea3.chunk.js.map": "/gullak_shg/static/js/198.4212cea3.chunk.js.map",
     "15.2e713238.chunk.js.map": "/gullak_shg/static/js/15.2e713238.chunk.js.map",
     "125.7752d116.chunk.js.map": "/gullak_shg/static/js/125.7752d116.chunk.js.map",
@@ -105,6 +105,6 @@
   },
   "entrypoints": [
     "static/css/main.74c68718.css",
-    "static/js/main.33fc7c2c.js"
+    "static/js/main.6aea4ef9.js"
   ]
 }
