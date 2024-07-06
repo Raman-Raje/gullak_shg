@@ -1,0 +1,908 @@
+Database Schema Design
+Here’s a structured approach for your SHG application, divided into key tables with their relevant fields:
+
+
+**********************************************************
+Users Table :- This table stores detailed information about each user.
+
+1. Users Table
+--------------
+Purpose: Stores detailed information about each user.
+
+CREATE TABLE Users (
+    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    address TEXT,
+    phone_number TEXT CHECK (phone_number ~ '^\+?[0-9\s\-()]*$'),
+    email TEXT UNIQUE CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}$'),
+    image_url TEXT,
+    date_of_birth DATE CHECK (date_of_birth <= CURRENT_DATE AND date_of_birth >= '1900-01-01'),
+    joining_date DATE CHECK (joining_date <= CURRENT_DATE),
+    identification_number VARCHAR(20) UNIQUE,  -- Addhar, PAN, Voter ID
+    encrypted_identification_number BYTEA,  -- Encrypted identification number
+    emergency_contact TEXT CHECK (emergency_contact ~ '^\+?[0-9\s\-()]*$'),
+    gender VARCHAR(10) CHECK (gender IN ('Male', 'Female', 'Other')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp
+);
+
+CREATE INDEX idx_users_user_id ON Users(user_id);
+CREATE INDEX idx_users_email ON Users(email);
+
+Policy for users:
+-----------------
+
+-- Enable Row Level Security
+ALTER TABLE Users ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow users to select their own information
+CREATE POLICY select_own_data ON Users
+FOR SELECT
+USING (auth.uid() = user_id);
+
+-- Policy: Allow users to update their own information
+CREATE POLICY update_own_data ON Users
+FOR UPDATE
+USING (auth.uid() = user_id);
+
+-- Policy: Prevent deletion of user records
+CREATE POLICY no_delete ON Users
+FOR DELETE
+USING (false);
+
+TODO: Records are only inserted after signups, Discard the below policy
+-- Policy: Allow only admins to insert user records
+CREATE POLICY insert_user ON Users
+FOR INSERT
+WITH CHECK (exists (
+  select 1
+  from auth.users
+  where id = auth.uid()
+  and is_admin = true
+));
+
+-- Policy: Allow admins to view users associated with their SHG group
+CREATE POLICY admin_view_own_group_users ON Users
+FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1
+    FROM Memberships AS m_admin
+    JOIN Memberships AS m_user ON m_admin.group_id = m_user.group_id
+    WHERE m_admin.user_id = auth.uid() 
+      AND m_admin.role = 'admin' 
+      AND m_user.user_id = Users.user_id
+  )
+);
+
+-- Policy: Allow CRPs to view user information for SHGs they oversee
+CREATE POLICY crp_view_own_shg_users ON Users
+FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1
+    FROM Memberships AS m_crp
+    JOIN Memberships AS m_user ON m_crp.group_id = m_user.group_id
+    WHERE m_crp.user_id = auth.uid() 
+      AND m_crp.role = 'crp'
+      AND m_user.user_id = Users.user_id
+  )
+);
+
+
+**********************************************************
+
+SHG Groups Table :- This table manages information about each SHG.
+
+TODO: classifiy mandatory and optional fields
+
+2. Groups Table
+------------------
+Purpose: Manages information about each SHG.
+
+Table:
+
+CREATE TABLE Groups (
+
+    -- basic information
+    group_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_name VARCHAR(255) NOT NULL,
+    address TEXT,
+    phone_number TEXT CHECK (phone_number ~ '^\+?[0-9\s\-()]*$'),
+    -- group email check if provided
+    email TEXT,
+    CHECK (email IS NULL OR email = '' OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}$'),
+    image_url TEXT,
+    max_members INTEGER CHECK (max_members > 0),
+    min_members INTEGER CHECK (min_members >= 1 AND min_members <= max_members), -- Ensure min is within valid range
+    lock_in_period NUMERIC CHECK (lock_in_period >= 0), -- Lock-in period for members in months
+    is_registered BOOLEAN,
+    registration_number VARCHAR,
+    registration_date DATE CHECK (registration_date <= CURRENT_DATE),
+
+    -- contribution details
+    joining_fee NUMERIC CHECK (joining_fee >= 0), -- Joining fee for new members
+    meeting_frequency VARCHAR CHECK (meeting_frequency IN ('daily', 'weekly', 'monthly', 'quarterly')),
+    contribution_frequency VARCHAR CHECK (contribution_frequency IN ('monthly', 'quarterly')), -- Contribution frequency
+    contribution_amount NUMERIC CHECK (contribution_amount >= 0), -- Contribution amount
+    contribution_day INTEGER CHECK (contribution_day >= 1 AND contribution_day <= 30), -- contribution day based on contribution_frequency (1-30)
+    contribution_penalty NUMERIC CHECK (contribution_penalty >= 0), -- Penalty for late contributions
+
+    -- bank details
+    bank_name VARCHAR,
+    bank_account_number VARCHAR,
+    bank_account_type VARCHAR CHECK (bank_account_type IN ('savings', 'current', 'joint')),
+    bank_ifsc_code VARCHAR,
+    bank_branch_name VARCHAR,
+    bank_account_holder VARCHAR,
+
+    -- loan details
+    max_loan_amount NUMERIC CHECK (max_loan_amount >= 0), -- Maximum loan amount SHG can provide
+    loan_interest_rate NUMERIC CHECK (loan_interest_rate >= 0), -- Interest rate for loans
+    max_loan_duration NUMERIC CHECK (max_loan_duration >= 0), -- Maximum loan duration in months
+    installment_penalty NUMERIC CHECK (installment_penalty >= 0), -- Penalty for late loan installments
+
+    -- other details
+    created_by UUID, -- User who created the SHG    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    updated_by UUID -- User who last updated the SHG
+);
+
+policies for Groups Table:
+
+1. Read-Only Access for Users: Regular users can only read information about their SHG group.
+2. Full Control for Admins: Admins can manage (insert, update, delete) their SHG group.
+3. Restrict access to sensitive columns, such as bank account details, to only admins.
+
+-- Enable Row Level Security
+ALTER TABLE Groups ENABLE ROW LEVEL SECURITY;
+
+-- Allow members to select only SHGs they belong to
+CREATE POLICY member_select ON Groups
+FOR SELECT
+USING (EXISTS (
+    SELECT 1
+    FROM Memberships
+    WHERE group_id = Groups.group_id AND user_id = auth.uid()
+));
+
+-- Allow authenticated users to insert new groups
+CREATE POLICY insert_groups ON groups
+FOR INSERT
+WITH CHECK (auth.role() = 'authenticated');
+
+-- Allow admins to update their own groups
+CREATE POLICY admin_update_own_group ON groups
+FOR UPDATE
+USING (EXISTS (
+    SELECT 1
+    FROM memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.role = 'admin'
+      AND m.group_id = groups.group_id
+));
+
+-- Allow admins to delete their own groups
+CREATE POLICY admin_delete_own_group ON groups
+FOR DELETE
+USING (EXISTS (
+    SELECT 1
+    FROM memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.role = 'admin'
+      AND m.group_id = groups.group_id
+));
+
+-- View for members (excluding sensitive information)
+CREATE VIEW member_groups AS
+SELECT *
+FROM Groups
+WHERE EXISTS (
+    SELECT 1
+    FROM Memberships
+    WHERE group_id = Groups.group_id AND user_id = auth.uid()
+);
+
+-- Policy: Allow CRPs to view SHGs they oversee
+CREATE POLICY crp_view_own_shgs ON Groups
+FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.role = 'crp'
+      AND m.group_id = Groups.group_id
+  )
+);
+
+TODO: Full access for current viewving SHG only. Need to revice policy
+-- Create the view for admins (full access)
+CREATE VIEW admin_groups AS
+SELECT g.*
+FROM Groups g
+WHERE EXISTS (
+    SELECT 1
+    FROM Memberships m
+    WHERE m.user_id = auth.uid() 
+      AND m.role = 'admin' 
+      AND m.group_id = g.group_id
+);
+
+**********************************************************
+
+
+Memberships Table :- This table links users to groups and defines roles within the group.
+
+3. Memberships Table
+------------------
+Purpose: Links users to groups and defines roles within the group.
+
+Table:
+
+CREATE TABLE Memberships (
+    membership_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), -- Auto-generate UUIDs for new records
+    group_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'member', 'crp')), -- Define valid roles
+    membership_status VARCHAR(20) NOT NULL CHECK (membership_status IN ('active', 'inactive', 'left', 'suspended')), -- Define valid statuses
+    contribution_amount NUMERIC CHECK (contribution_amount >= 0), -- Ensure non-negative contribution amount
+    contribution_frequency VARCHAR(20) CHECK (contribution_frequency IN ('monthly', 'quarterly', 'yearly')), -- Define valid frequencies
+    FOREIGN KEY (group_id) REFERENCES Groups(group_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+);
+
+-- Add indexes to improve performance
+CREATE INDEX idx_memberships_group_id ON Memberships(group_id);
+CREATE INDEX idx_memberships_user_id ON Memberships(user_id);
+
+policies for Memberships Table:
+
+1. Read-Only Access for Users: Regular users can only read their own memberships.
+2. Full Control for Admins: Admins can manage (insert, update, delete) memberships within their SHG groups.
+3. members can read others membership inside the group.
+
+-- Enable Row Level Security
+ALTER TABLE Memberships ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow users to select their own memberships
+CREATE POLICY user_select_own_memberships ON Memberships
+FOR SELECT
+USING (user_id = auth.uid());
+
+
+-- Policy: Allow users to select other members within their group.
+CREATE POLICY user_select_group_memberships ON Memberships
+FOR SELECT
+USING (EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.group_id = Memberships.group_id
+));
+
+-- Policy: Allow admins to manage memberships within their groups
+CREATE POLICY admin_manage_group_memberships ON Memberships
+FOR ALL
+USING (EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid() 
+      AND m.role = 'admin' 
+      AND m.group_id = Memberships.group_id
+))
+WITH CHECK (EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid() 
+      AND m.role = 'admin' 
+      AND m.group_id = Memberships.group_id
+));
+
+-- Policy: Allow CRPs to view memberships for SHGs they oversee
+CREATE POLICY crp_view_own_shg_memberships ON Memberships
+FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.role = 'crp'
+      AND m.group_id = Memberships.group_id
+  )
+);
+
+**************************[ Triggers ]********************************
+-- create a trigger to assign a admin role to the first user who creates the group
+
+create or replace function public.assign_admin_role()
+returns trigger as $$
+begin
+
+    -- Disable row level security temporarily
+    perform set_config('row_security', 'off', true);
+
+    insert into memberships (group_id, user_id, role, membership_status, contribution_amount, contribution_frequency)
+    values (new.group_id, new.created_by, 'admin', 'active', new.contribution_amount, new.contribution_frequency);
+
+    -- Re-enable row level security
+    perform set_config('row_security', 'on', true);
+    
+    return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger assign_admin_role
+after insert on groups
+for each row
+execute function public.assign_admin_role();
+
+**********************************************************
+
+4. Loans Table:- This table manages loan-specific information. Tracks loans given to users.
+
+Column Descriptions and Justifications:
+---------------------------------------
+loan_id: Ensures each loan can be uniquely identified.
+group_id: Links the loan to the specific SHG providing it.
+user_id: Links the loan to the specific member or admin receiving it.
+loan_amount: Captures the principal amount of the loan.
+interest_rate: Captures the interest rate, ensuring it is within a valid range.
+loan_purpose: Specifies the reason for the loan, providing context for financial management.
+loan_status: Tracks the current state of the loan lifecycle.
+loan_start_date: Records when the loan was issued.
+loan_end_date: Sets the expected completion date of the loan.
+repayment_frequency: Ensures the correct scheduling of repayments.
+installment_amount: Helps in calculating the regular payment amounts.
+remaining_balance: Tracks how much of the loan is still outstanding.
+collateral: Records any collateral provided, enhancing the security of the loan.
+created_at: Tracks when the loan record was initially created.
+updated_at: Tracks the last update to the loan record, important for auditing and management.
+
+-- Create the Loans table
+CREATE TABLE Loans (
+    loan_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    loan_amount NUMERIC NOT NULL CHECK (loan_amount > 0),
+    interest_rate NUMERIC NOT NULL CHECK (interest_rate >= 0 AND interest_rate <= 100),
+    loan_purpose VARCHAR(50) NOT NULL,
+    loan_status VARCHAR(20) NOT NULL CHECK (loan_status IN ('approved', 'pending', 'rejected', 'disbursed', 'completed')) DEFAULT 'pending',
+    loan_start_date DATE NOT NULL,
+    loan_end_date DATE NOT NULL,
+    repayment_frequency VARCHAR(20) NOT NULL CHECK (repayment_frequency IN ('monthly', 'quarterly', 'yearly')),
+    installment_amount NUMERIC NOT NULL CHECK (installment_amount >= 0),
+    remaining_balance NUMERIC NOT NULL CHECK (remaining_balance >= 0),
+    collateral TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES Groups(group_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+);
+
+-- Add indexes for performance
+CREATE INDEX idx_loans_group_id ON Loans(group_id);
+CREATE INDEX idx_loans_user_id ON Loans(user_id);
+
+-- Enable Row Level Security
+ALTER TABLE Loans ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow users to insert their own loans
+CREATE POLICY user_insert_own_loans ON Loans
+FOR INSERT
+WITH CHECK (user_id = auth.uid());
+
+-- Policy: Allow users to update their own loans while pending approval
+CREATE POLICY user_update_own_pending_loans ON Loans
+FOR UPDATE
+USING (user_id = auth.uid() AND loan_status = 'pending')
+WITH CHECK (user_id = auth.uid() AND loan_status = 'pending');
+
+-- Policy: Allow admins to view and manage all loans within their groups
+CREATE POLICY admin_manage_group_loans ON Loans
+FOR ALL
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'admin'
+          AND group_id = Loans.group_id
+    )
+)
+WITH CHECK (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'admin'
+          AND group_id = Loans.group_id
+    )
+);
+
+-- Policy: Allow CRPs to view loans related to their SHGs
+CREATE POLICY crp_view_shg_loans ON Loans
+FOR SELECT
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'crp'
+          AND group_id = Loans.group_id
+    )
+);
+
+**********************************************************
+
+5. Transactions Table :- This table records financial transactions (savings, loans, repayments).
+
+
+Flowchart Descriptions : -
+
+1. User Contribution Towards SHG
+--------------------------------
+Start: User initiates the contribution process.
+Initiate Payment: User inputs the contribution amount and selects payment method.
+Create Payment Order: System creates a payment order using Razorpay API.
+Redirect to Razorpay: User is redirected to Razorpay for payment.
+Complete Payment: User completes the payment on Razorpay.
+Verify Payment: Razorpay sends a payment success or failure response to the system.
+Update Database: On success, update the Transactions table and mark the contribution.
+Send Notification: Notify the user and admin of the successful contribution.
+End: Contribution process is complete.
+
+[Start]
+    |
+    v
+[Initiate Payment] --> [Create Payment Order] --> [Redirect to Razorpay] --> [Complete Payment]
+    |                                                              |
+    |                                                              v
+    v                                                     [Payment Success]
+[Verify Payment]                                           /          \
+    |                                                     /            \
+    v                                                    /              \
+[Update Database]                                      [Yes]           [No]
+    |                                                   /                \
+    v                                                 /                  \
+[Send Notification]                                  /                    \
+    |                                               /                      \
+    v                                              v                        v
+[End]                                     [Update Database]             [End]
+                                                /          \
+                                                 /            \
+                                                /              \
+                                             [Yes]           [No]
+                                             /                \
+                                            /                  \
+                                         v                    v
+                                    [Send Notification]       [End]
+                                            |
+                                            v
+                                         [End]
+
+2. Loan Repayment by User
+--------------------------
+Start: User initiates the loan repayment process.
+Initiate Payment: User inputs the repayment amount and selects payment method.
+Create Payment Order: System creates a payment order using Razorpay API.
+Redirect to Razorpay: User is redirected to Razorpay for payment.
+Complete Payment: User completes the payment on Razorpay.
+Verify Payment: Razorpay sends a payment success or failure response to the system.
+Update Database: On success, update the Transactions table and the Loans table to reflect the repayment.
+Send Notification: Notify the user and admin of the successful repayment.
+End: Repayment process is complete.
+
+
+[Start]
+    |
+    v
+[Initiate Payment] --> [Create Payment Order] --> [Redirect to Razorpay] --> [Complete Payment]
+    |                                                              |
+    |                                                              v
+    v                                                     [Payment Success]
+[Verify Payment]                                           /          \
+    |                                                     /            \
+    v                                                    /              \
+[Update Database]                                      [Yes]           [No]
+    |                                                   /                \
+    v                                                 /                  \
+[Send Notification]                                  /                    \
+    |                                               /                      \
+    v                                              v                        v
+[End]                                     [Update Database]             [End]
+                                                /          \
+                                                 /            \
+                                                /              \
+                                             [Yes]           [No]
+                                             /                \
+                                            /                  \
+                                         v                    v
+                                    [Send Notification]       [End]
+                                            |
+                                            v
+                                         [End]
+
+
+
+3. Loan Disbursement by SHG to Users
+------------------------------------
+Start: Admin initiates the loan disbursement process.
+Verify Loan Approval: System verifies that the loan request is approved.
+Create Disbursement Entry: System creates a loan disbursement entry in the Transactions table.
+Initiate Payment: System initiates the payment process using Razorpay (if applicable, usually direct bank transfer for disbursements).
+Complete Payment: Admin confirms the disbursement.
+Update Database: Update the Transactions table and the Loans table to reflect the disbursement.
+Send Notification: Notify the user and admin of the successful disbursement.
+End: Disbursement process is complete.
+
+[Start]
+    |
+    v
+[Verify Loan Approval]
+    |
+    v
+[Create Disbursement Entry]
+    |
+    v
+[Initiate Payment]
+    |
+    v
+[Complete Payment]
+    |
+    v
+[Update Database]
+    |
+    v
+[Send Notification]
+    |
+    v
+[End]
+
+4. Loan Repayment Reminder
+
+Start: System triggers the loan repayment reminder process.
+Check Pending Repayments: System checks for pending loan repayments.
+Send Reminder: System sends reminders to users with pending repayments.
+End: Reminder process is complete.
+
+[Start]
+    |
+    v
+[Check Pending Repayments]
+    |
+    v
+[Send Reminder]
+    |
+    v
+[End]
+
+
+Table:
+
+CREATE TABLE Transactions (
+    transaction_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('credit', 'debit')),
+    transaction_mode VARCHAR(20) NOT NULL CHECK (transaction_mode IN ('card', 'cash', 'upi', 'netbanking', 'cheque', 'other')), -- Add other relevant modes
+    transaction_purpose VARCHAR(20) NOT NULL CHECK (transaction_purpose IN ('contribution', 'repayment', 'disbursement')),
+    loan_id UUID REFERENCES Loans(loan_id), -- Reference to specific loan if applicable
+    amount NUMERIC NOT NULL CHECK (amount >= 0),
+    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    currency VARCHAR(3) NOT NULL CHECK (currency IN ('USD', 'INR', 'EUR')) DEFAULT 'INR', -- Add more currencies as needed
+    description TEXT,
+    transaction_status VARCHAR(20) CHECK (transaction_status IN ('pending', 'completed', 'failed')) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES Groups(group_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+);
+
+-- Indexes for performance
+CREATE INDEX idx_transactions_group_id ON Transactions(group_id);
+CREATE INDEX idx_transactions_user_id ON Transactions(user_id);
+CREATE INDEX idx_transactions_loan_id ON Transactions(loan_id);
+
+Policies for Transactions Table:
+
+-- Policy: Allow all users to insert transactions
+CREATE POLICY user_insert_transactions ON Transactions
+FOR INSERT
+WITH CHECK (true);
+
+-- Policy: Disallow any updates to transactions
+CREATE POLICY no_update_transactions ON Transactions
+FOR UPDATE
+USING (false);
+
+-- Policy: Allow admins to view all transactions
+CREATE POLICY admin_select_all_transactions ON Transactions
+FOR SELECT
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'admin'
+          AND group_id = Transactions.group_id
+    )
+);
+
+-- Policy: Allow users to view their transactions in their SHG
+CREATE POLICY member_select_group_transactions ON Transactions
+FOR SELECT
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND group_id = Transactions.group_id
+    )
+);
+
+-- Policy: Allow CRPs to view transactions related to their SHGs
+CREATE POLICY crp_select_shg_transactions ON Transactions
+FOR SELECT
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'crp'
+          AND group_id = Transactions.group_id
+    )
+);
+
+**********************************************************
+
+6. Messages/Notification table:- This table stores messages and notifications for users and groups.
+
+CREATE TABLE Notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID, -- Nullable for non-group-specific notifications
+    user_id UUID, -- Nullable for group-wide notifications
+    title VARCHAR(255) NOT NULL, -- Specify length for title
+    message TEXT NOT NULL,
+    notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('info', 'warning', 'alert', 'other')),
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES Groups(group_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+);
+
+-- Add indexes for performance
+CREATE INDEX idx_notifications_group_id ON Notifications(group_id);
+CREATE INDEX idx_notifications_user_id ON Notifications(user_id);
+
+-- Enable Row Level Security
+ALTER TABLE Notifications ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow users to view their own notifications and group notifications
+CREATE POLICY user_select_notifications ON Notifications
+FOR SELECT
+USING (
+    user_id = auth.uid() OR
+    group_id IN (SELECT group_id FROM Memberships WHERE user_id = auth.uid())
+);
+
+-- Policy: Allow admins to manage notifications for their groups
+CREATE POLICY admin_manage_group_notifications ON Notifications
+FOR ALL
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'admin'
+          AND group_id = Notifications.group_id
+    )
+)
+WITH CHECK (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'admin'
+          AND group_id = Notifications.group_id
+    )
+);
+
+-- Policy: Allow CRPs to view notifications for their groups
+CREATE POLICY crp_select_group_notifications ON Notifications
+FOR SELECT
+USING (
+    EXISTS (
+        SELECT 1
+        FROM Memberships
+        WHERE user_id = auth.uid()
+          AND role = 'crp'
+          AND group_id = Notifications.group_id
+    )
+);
+
+**********************************************************
+                Audit Logs Table
+
+TODO: Add readonly poloicy for members/CRP/admin on audit logs. No one should be able to update/delete the logs.                
+**********************************************************
+
+1. Group Audit Log:
+------------------
+Purpose: Records changes made to the database for auditing and tracking purposes.
+
+CREATE TABLE GroupAuditLogs (
+    audit_id SERIAL PRIMARY KEY,
+    group_id UUID NOT NULL,
+    changed_by UUID NOT NULL, -- User who made the change
+    change_time TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    operation VARCHAR(10) CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
+    old_data JSONB,
+    new_data JSONB
+);
+
+CREATE OR REPLACE FUNCTION log_group_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        INSERT INTO GroupAuditLogs (group_id, changed_by, operation, new_data)
+        VALUES (NEW.group_id, current_user::UUID, TG_OP, row_to_json(NEW));
+        RETURN NEW;
+    ELSIF (TG_OP = 'UPDATE') THEN
+        INSERT INTO GroupAuditLogs (group_id, changed_by, change_time, operation, old_data, new_data)
+        VALUES (NEW.group_id, current_user::UUID, current_timestamp, TG_OP, row_to_json(OLD), row_to_json(NEW));
+        RETURN NEW;
+    ELSIF (TG_OP = 'DELETE') THEN
+        INSERT INTO GroupAuditLogs (group_id, changed_by, operation, old_data)
+        VALUES (OLD.group_id, current_user::UUID, TG_OP, row_to_json(OLD));
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+Triggering the Audit Log:
+
+-- Trigger for INSERT operations
+CREATE TRIGGER trigger_log_group_insert
+AFTER INSERT ON Groups
+FOR EACH ROW
+EXECUTE FUNCTION log_group_changes();
+
+-- Trigger for UPDATE operations
+CREATE TRIGGER trigger_log_group_update
+AFTER UPDATE ON Groups
+FOR EACH ROW
+EXECUTE FUNCTION log_group_changes();
+
+-- Trigger for DELETE operations
+CREATE TRIGGER trigger_log_group_delete
+AFTER DELETE ON Groups
+FOR EACH ROW
+EXECUTE FUNCTION log_group_changes();
+
+TODO: Review policies. There is error for admin_role in below policy
+policy for GroupAuditLogs:
+--------------------------
+
+REVOKE ALL ON GroupAuditLogs FROM PUBLIC;
+GRANT SELECT ON GroupAuditLogs TO admin_role;
+
+**********************************************************
+
+2. membership audit log:
+----------------------
+
+CREATE TABLE MembershipAuditLogs (
+    audit_id SERIAL PRIMARY KEY,
+    membership_id UUID NOT NULL,
+    group_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    changed_by UUID NOT NULL, -- User who made the change
+    change_time TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    operation VARCHAR(10) CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
+    old_data JSONB,
+    new_data JSONB
+);
+
+
+CREATE OR REPLACE FUNCTION log_membership_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        INSERT INTO MembershipAuditLogs (membership_id, group_id, user_id, changed_by, operation, new_data)
+        VALUES (NEW.membership_id, NEW.group_id, NEW.user_id, current_user::UUID, TG_OP, row_to_json(NEW));
+        RETURN NEW;
+    ELSIF (TG_OP = 'UPDATE') THEN
+        INSERT INTO MembershipAuditLogs (membership_id, group_id, user_id, changed_by, change_time, operation, old_data, new_data)
+        VALUES (NEW.membership_id, NEW.group_id, NEW.user_id, current_user::UUID, current_timestamp, TG_OP, row_to_json(OLD), row_to_json(NEW));
+        RETURN NEW;
+    ELSIF (TG_OP = 'DELETE') THEN
+        INSERT INTO MembershipAuditLogs (membership_id, group_id, user_id, changed_by, operation, old_data)
+        VALUES (OLD.membership_id, OLD.group_id, OLD.user_id, current_user::UUID, TG_OP, row_to_json(OLD));
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+Triggering the Audit Log:
+-------------------------
+
+-- Trigger for INSERT operations
+CREATE TRIGGER trigger_log_membership_insert
+AFTER INSERT ON Memberships
+FOR EACH ROW
+EXECUTE FUNCTION log_membership_changes();
+
+-- Trigger for UPDATE operations
+CREATE TRIGGER trigger_log_membership_update
+AFTER UPDATE ON Memberships
+FOR EACH ROW
+EXECUTE FUNCTION log_membership_changes();
+
+-- Trigger for DELETE operations
+CREATE TRIGGER trigger_log_membership_delete
+AFTER DELETE ON Memberships
+FOR EACH ROW
+EXECUTE FUNCTION log_membership_changes();
+
+
+**********************************************************
+
+3. Loan Audit Log:
+------------------
+
+CREATE TABLE LoanAuditLogs (
+    audit_id SERIAL PRIMARY KEY,
+    loan_id UUID,
+    group_id UUID,
+    user_id UUID,
+    operation VARCHAR(10) NOT NULL CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
+    changed_by UUID NOT NULL,
+    change_time TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    old_data JSONB,
+    new_data JSONB
+);
+
+CREATE OR REPLACE FUNCTION log_loan_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        INSERT INTO LoanAuditLogs (loan_id, group_id, user_id, operation, changed_by, new_data)
+        VALUES (NEW.loan_id, NEW.group_id, NEW.user_id, TG_OP, current_user::UUID, row_to_json(NEW));
+        RETURN NEW;
+    ELSIF (TG_OP = 'UPDATE') THEN
+        INSERT INTO LoanAuditLogs (loan_id, group_id, user_id, operation, changed_by, change_time, old_data, new_data)
+        VALUES (NEW.loan_id, NEW.group_id, NEW.user_id, TG_OP, current_user::UUID, current_timestamp, row_to_json(OLD), row_to_json(NEW));
+        RETURN NEW;
+    ELSIF (TG_OP = 'DELETE') THEN
+        INSERT INTO LoanAuditLogs (loan_id, group_id, user_id, operation, changed_by, old_data)
+        VALUES (OLD.loan_id, OLD.group_id, OLD.user_id, TG_OP, current_user::UUID, row_to_json(OLD));
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+Triggering the Audit Log:
+
+-- Trigger for INSERT operations
+CREATE TRIGGER trigger_log_loan_insert
+AFTER INSERT ON Loans
+FOR EACH ROW
+EXECUTE FUNCTION log_loan_changes();
+
+-- Trigger for UPDATE operations
+CREATE TRIGGER trigger_log_loan_update
+AFTER UPDATE ON Loans
+FOR EACH ROW
+EXECUTE FUNCTION log_loan_changes();
+
+-- Trigger for DELETE operations
+CREATE TRIGGER trigger_log_loan_delete
+AFTER DELETE ON Loans
+FOR EACH ROW
+EXECUTE FUNCTION log_loan_changes();
+
+**********************************************************
+

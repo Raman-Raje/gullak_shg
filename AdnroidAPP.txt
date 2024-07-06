@@ -1,0 +1,6 @@
+-- Add below to android Manifets
+
+        android:usesCleartextTraffic="true"
+        tools:targetApi="m"
+
+-- Make sure to use updated craco-config

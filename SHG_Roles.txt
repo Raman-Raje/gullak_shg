@@ -1,0 +1,32 @@
+Revised Roles and Responsibilities
+*************************************
+
+Admin:
+-----------
+1. Create and Manage SHGs: Responsible for creating SHGs, adding/removing/restricting members.
+2. Approve Requests: Approve loan requests, payment requests, and other member requests.
+3. Financial Transactions:
+    * Make payments from their account towards SHG.
+    * View and manage all financial transactions.
+4. Add CRPs: Add CRP (Community Resource Person) users and assign them to specific SHGs.
+5. View Reports: Generate and view detailed financial and activity reports for SHGs.
+6. Set Policies: Define and update SHG policies, such as loan interest rates, repayment schedules, etc.
+
+Members:
+-------------
+1. View Transactions: View their own financial transactions and overall SHG transactions.
+2. Make Payments: Make payments from their account towards SHG.
+3. View Members: Read access to the list of SHG members and their roles.
+4. Request Actions:
+    * Raise requests for loans.
+    * Raise requests for payments (replace with payment wallet functionality).
+5. Receive Notifications: Receive notifications about approvals, reminders, and updates related to their requests and transactions.
+6. Attend Meetings: View and participate in SHG meetings, view meeting agendas, and minutes.
+
+CRP (Community Resource Person):
+---------------------------------
+1. View SHGs: View access to SHG details, including members, transactions, and meeting details.
+2. Multi-SHG Oversight: Act as a point of contact for multiple SHGs in a designated area, providing guidance and support.
+3. Report Issues: Report issues or concerns to the Admin related to SHG activities or member conduct.
+4. Training and Support: Provide training and support to SHG members on using the application and understanding their roles and responsibilities.
+5. Monitor Compliance: Ensure that SHGs are adhering to established policies and procedures.

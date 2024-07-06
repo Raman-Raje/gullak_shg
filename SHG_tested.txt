@@ -1,0 +1,323 @@
+
+-- Create a table for public users
+create table users (
+  user_id uuid references auth.users on delete cascade not null primary key,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone,
+  username text unique,
+  full_name text,
+  email text,  -- Add email column
+  avatar_url text,
+  website text,
+  provider text,
+  date_of_birth DATE CHECK (date_of_birth <= CURRENT_DATE AND date_of_birth >= '1900-01-01'),
+  address TEXT,
+  phone_number TEXT CHECK (phone_number ~ '^\+?[0-9\s\-()]*$'),
+
+  constraint username_length check (char_length(username) >= 3),
+  constraint email_format check (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$')  -- Email format check
+);
+
+-- Set up Row Level Security (RLS)
+alter table users
+  enable row level security;
+
+create policy "Users profiles are viewable by everyone." on users
+  for select using (true);
+
+  -- Allow authenticated users to select all users
+create policy "Authenticated users can select all users." on users
+  for select using (auth.role() = 'authenticated');
+
+create policy "Profiles can insert their own profile." on users
+  for insert with check ((select auth.uid()) = user_id);
+
+create policy "Profiles can update own profile." on users
+  for update using ((select auth.uid()) = user_id);
+
+-- This trigger automatically creates a users entry when a new user signs up via Supabase Auth.
+create function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.users (user_id, full_name, email, avatar_url, provider )
+  values (new.id, new.raw_user_meta_data->>'full_name',new.raw_user_meta_data->>'email', new.raw_user_meta_data->>'avatar_url', new.raw_app_meta_data->>'provider');
+  return new;
+end;
+$$ language plpgsql security definer;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+****************************************************************
+
+-- Set up Storage!
+-- Create a bucket named 'avatars'
+insert into storage.buckets (id, name) values ('avatars', 'avatars');
+
+-- Enable RLS on storage.objects
+alter table storage.objects enable row level security;
+
+-- Create a policy to allow authenticated users to read all files in the 'avatars' bucket
+create policy "Authenticated users can read all avatars" on storage.objects
+  for select using (auth.role() = 'authenticated' and bucket_id = 'avatars');
+
+-- Create a policy to allow authenticated users to insert their own files into the 'avatars' bucket
+create policy "Authenticated users can insert their own avatars" on storage.objects
+  for insert with check (auth.role() = 'authenticated' and bucket_id = 'avatars');
+
+-- Create a policy to allow authenticated users to update their own files in the 'avatars' bucket
+create policy "Authenticated users can update their own avatars" on storage.objects
+  for update with check (auth.role() = 'authenticated' and bucket_id = 'avatars');
+
+-- Create a policy to allow authenticated users to delete their own files in the 'avatars' bucket
+create policy "Authenticated users can delete their own avatars" on storage.objects
+  for delete using (auth.role() = 'authenticated' and bucket_id = 'avatars');
+
+
+**************************************[ New ]**************************
+
+-- Create a trigger function to update the avatar URL in the users table
+CREATE OR REPLACE FUNCTION public.update_avatar_url()
+RETURNS TRIGGER AS $$
+DECLARE
+  new_avatar_url TEXT;
+  extracted_user_id UUID;
+BEGIN
+  -- Construct the public URL directly in the function
+  new_avatar_url := 'https://uorqkiflhqvfimjgrzmv.supabase.co/storage/v1/object/public/avatars/' || NEW.name;
+
+  -- Extract the user_id from the metadata
+  extracted_user_id := split_part(NEW.name, '/', 1)::UUID;
+
+  -- Update the avatar_url in the users table
+  UPDATE users
+  SET avatar_url = new_avatar_url,
+      updated_at = NOW()
+  WHERE user_id = extracted_user_id;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create the trigger on the storage.objects table
+CREATE TRIGGER on_avatar_updated
+AFTER INSERT OR UPDATE ON storage.objects
+FOR EACH ROW
+WHEN (NEW.bucket_id = 'avatars')
+EXECUTE FUNCTION public.update_avatar_url();
+
+
+****************************************************************
+
+CREATE TABLE Groups (
+
+    -- basic information
+    group_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_name VARCHAR(255) NOT NULL,
+    address TEXT,
+    phone_number TEXT CHECK (phone_number ~ '^\+?[0-9\s\-()]*$'),
+    -- group email check if provided
+    email TEXT,
+    CHECK (email IS NULL OR email = '' OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}$'),
+    image_url TEXT,
+    max_members INTEGER CHECK (max_members > 0),
+    min_members INTEGER CHECK (min_members >= 1 AND min_members <= max_members), -- Ensure min is within valid range
+    lock_in_period NUMERIC CHECK (lock_in_period >= 0), -- Lock-in period for members in months
+    is_registered BOOLEAN,
+    registration_number VARCHAR,
+    registration_date DATE CHECK (registration_date <= CURRENT_DATE),
+
+    -- contribution details
+    joining_fee NUMERIC CHECK (joining_fee >= 0), -- Joining fee for new members
+    meeting_frequency VARCHAR CHECK (meeting_frequency IN ('daily', 'weekly', 'monthly', 'quarterly')),
+    contribution_frequency VARCHAR CHECK (contribution_frequency IN ('monthly', 'quarterly')), -- Contribution frequency
+    contribution_amount NUMERIC CHECK (contribution_amount >= 0), -- Contribution amount
+    contribution_day INTEGER CHECK (contribution_day >= 1 AND contribution_day <= 30), -- contribution day based on contribution_frequency (1-30)
+    contribution_penalty NUMERIC CHECK (contribution_penalty >= 0), -- Penalty for late contributions
+
+    -- bank details
+    bank_name VARCHAR,
+    bank_account_number VARCHAR,
+    bank_account_type VARCHAR CHECK (bank_account_type IN ('savings', 'current', 'joint')),
+    bank_ifsc_code VARCHAR,
+    bank_branch_name VARCHAR,
+    bank_account_holder VARCHAR,
+
+    -- loan details
+    max_loan_amount NUMERIC CHECK (max_loan_amount >= 0), -- Maximum loan amount SHG can provide
+    loan_interest_rate NUMERIC CHECK (loan_interest_rate >= 0), -- Interest rate for loans
+    max_loan_duration NUMERIC CHECK (max_loan_duration >= 0), -- Maximum loan duration in months
+    installment_penalty NUMERIC CHECK (installment_penalty >= 0), -- Penalty for late loan installments
+
+    -- other details
+    created_by UUID, -- User who created the SHG    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
+    updated_by UUID -- User who last updated the SHG
+);
+
+CREATE TABLE Memberships (
+    membership_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), -- Auto-generate UUIDs for new records
+    group_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'member', 'crp')), -- Define valid roles
+    membership_status VARCHAR(20) NOT NULL CHECK (membership_status IN ('active', 'inactive', 'left', 'suspended')), -- Define valid statuses
+    contribution_amount NUMERIC CHECK (contribution_amount >= 0), -- Ensure non-negative contribution amount
+    contribution_frequency VARCHAR(20) CHECK (contribution_frequency IN ('monthly', 'quarterly', 'yearly')), -- Define valid frequencies
+    FOREIGN KEY (group_id) REFERENCES Groups(group_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+);
+
+-- Add indexes to improve performance
+CREATE INDEX idx_memberships_group_id ON Memberships(group_id);
+CREATE INDEX idx_memberships_user_id ON Memberships(user_id);
+
+
+-- Enable Row Level Security
+ALTER TABLE Groups ENABLE ROW LEVEL SECURITY;
+
+-- Allow members to select only SHGs they belong to
+CREATE POLICY member_select ON Groups
+FOR SELECT
+USING (EXISTS (
+    SELECT 1
+    FROM Memberships
+    WHERE group_id = Groups.group_id AND user_id = auth.uid()
+));
+
+-- Allow authenticated users to insert new groups
+CREATE POLICY insert_groups ON groups
+FOR INSERT
+WITH CHECK (auth.role() = 'authenticated');
+
+-- Allow admins to update their own groups
+CREATE POLICY admin_update_own_group ON groups
+FOR UPDATE
+USING (EXISTS (
+    SELECT 1
+    FROM memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.role = 'admin'
+      AND m.group_id = groups.group_id
+));
+
+-- Allow admins to delete their own groups
+CREATE POLICY admin_delete_own_group ON groups
+FOR DELETE
+USING (EXISTS (
+    SELECT 1
+    FROM memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.role = 'admin'
+      AND m.group_id = groups.group_id
+));
+
+-- Enable Row Level Security
+ALTER TABLE Memberships ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow users to select their own memberships
+CREATE POLICY user_select_own_memberships ON Memberships
+FOR SELECT
+USING (user_id = auth.uid());
+
+
+-- Policy: Allow users to select other members within their group.
+CREATE POLICY user_select_group_memberships ON Memberships
+FOR SELECT
+USING (EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid()
+      AND m.group_id = Memberships.group_id
+));
+
+-- Policy: Allow admins to manage memberships within their groups
+CREATE POLICY admin_manage_group_memberships ON Memberships
+FOR ALL
+USING (EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid() 
+      AND m.role = 'admin' 
+      AND m.group_id = Memberships.group_id
+))
+WITH CHECK (EXISTS (
+    SELECT 1
+    FROM Memberships AS m
+    WHERE m.user_id = auth.uid() 
+      AND m.role = 'admin' 
+      AND m.group_id = Memberships.group_id
+));
+
+-- create a trigger to assign a admin role to the first user who creates the group
+
+create or replace function public.assign_admin_role()
+returns trigger as $$
+begin
+
+    -- Disable row level security temporarily
+    perform set_config('row_security', 'off', true);
+
+    insert into memberships (group_id, user_id, role, membership_status, contribution_amount, contribution_frequency)
+    values (new.group_id, new.created_by, 'admin', 'active', new.contribution_amount, new.contribution_frequency);
+
+    -- Re-enable row level security
+    perform set_config('row_security', 'on', true);
+    
+    return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger assign_admin_role
+after insert on groups
+for each row
+execute function public.assign_admin_role();
+
+
+
+****************************************************************
+
+
+-- Policy: Allow users to select their own memberships
+CREATE POLICY user_select_own_memberships ON memberships
+FOR SELECT
+USING (user_id = auth.uid());
+
+-- Policy: Allow users to select other members within their group
+CREATE POLICY user_select_group_memberships ON memberships
+FOR SELECT
+USING (
+    user_id = auth.uid() OR EXISTS (
+        SELECT 1
+        FROM memberships m
+        WHERE m.user_id = auth.uid()
+          AND m.group_id = memberships.group_id
+    )
+);
+
+-- Policy: Allow admins to manage memberships within their groups
+CREATE POLICY admin_manage_group_memberships ON memberships
+FOR ALL
+USING (
+    EXISTS (
+        SELECT 1
+        FROM memberships m
+        WHERE m.user_id = auth.uid()
+          AND m.role = 'admin'
+          AND m.group_id = memberships.group_id
+    )
+)
+WITH CHECK (
+    EXISTS (
+        SELECT 1
+        FROM memberships m
+        WHERE m.user_id = auth.uid()
+          AND m.role = 'admin'
+          AND m.group_id = memberships.group_id
+    )
+);
+
+-- Allow all authenticated users to read the memberships table
+CREATE POLICY select_all_memberships ON memberships
+FOR SELECT
+USING (auth.role() = 'authenticated');
