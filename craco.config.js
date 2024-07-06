@@ -28,36 +28,30 @@ module.exports = {
             '@socket': path.resolve(__dirname, 'src/socket'),
             '@client': path.resolve(__dirname, 'src/client'),
         },
-        configure: (webpackConfig, {env}) => {
+        configure: (webpackConfig, { env }) => {
+            // Add the ImageMinimizerPlugin configuration
             webpackConfig.optimization.minimizer.push(
                 new ImageMinimizerPlugin({
                     generator: [
                         {
-                            // You can apply generator using `?as=webp`, you can use any name and provide more options
                             preset: "webp",
                             implementation: ImageMinimizerPlugin.imageminGenerate,
                             options: {
-                                // Please specify only one plugin here, multiple plugins will not work
                                 plugins: ["imagemin-webp"],
                             },
                         },
                     ],
-                }),
+                })
             );
 
             if (env === 'production') {
-                webpackConfig.plugins.push(
-                    new CompressionPlugin({
-                        test: /\.(js|css|html)$/,
-                        filename: '[path][base].gz',
-                        algorithm: 'gzip',
-                        threshold: 10240,
-                        minRatio: 0.8,
-                    }),
+                // Filter out the CompressionPlugin
+                webpackConfig.plugins = webpackConfig.plugins.filter(
+                    (plugin) => plugin.constructor.name !== 'CompressionPlugin'
                 );
             }
 
             return webpackConfig;
         },
-    }
+    },
 };

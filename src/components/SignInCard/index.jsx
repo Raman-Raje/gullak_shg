@@ -18,6 +18,8 @@ const SignInCard = () => {
           supabaseClient={supabase}
           appearance={{ theme: ThemeSupa }}
           providers={['google']}
+          redirectTo='https://Raman-Raje.github.io/gullak_shg/'
+          
         />
       </Card>
     </LandingWrapper>
