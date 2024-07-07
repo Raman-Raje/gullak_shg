@@ -8,21 +8,36 @@ export const LandingWrapper = styled.div`
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.secondary} 100%);
+  background: linear-gradient(135deg, #CCBBA6 0%, #A68B6D 100%);
   padding: 20px;
   color: ${colors.white};
+  text-align: center;
+`;
+
+export const LogoWrapper = styled.div`
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 10px;
+
+  img {
+    width: 250px;
+    height: 250px;
+    object-fit: cover;
+    border-radius: 50%;
+  }
 `;
 
 export const Card = styled.div`
   background: ${colors.white};
-  padding: 40px;
+  padding: 20px;
   border-radius: 12px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   max-width: 400px;
   width: 100%;
   text-align: center;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
-  margin-top: 20px; /* Added margin-top to reduce the gap */
+  margin-top: 20px;
 
   &:hover {
     transform: translateY(-5px);
@@ -34,46 +49,31 @@ export const Card = styled.div`
   }
 `;
 
-export const Title = styled.h1`
+export const BrandName = styled.h1`
   font-size: ${textSizes['32']};
+  margin-top: 10px;
   color: ${theme('theme', {
     light: colors.white,
-    dark: '#fff'
+    dark: '#fff',
   })};
-  text-align: center;
-  padding-bottom: 10px;
 
   ${breakpoints.tablet} {
     font-size: ${textSizes['48']};
   }
 `;
 
-export const Subtitle = styled.p`
-  font-size: ${textSizes['16']};
-  color: ${colors.text.secondary};
-  margin-bottom: 20px;
+export const Title = styled.h2`
+  font-size: ${textSizes['24']};
+  margin: 0;
+  padding: 0 0 20px 0;
+  color: ${theme('theme', {
+    light: colors.white,
+    dark: '#fff',
+  })};
 
-  ${breakpoints.mobileL} {
-    font-size: ${textSizes['18']};
+  ${breakpoints.tablet} {
+    font-size: ${textSizes['32']};
   }
 `;
 
-export const Form = styled.form`
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-`;
-
-export const Input = styled.input`
-  padding: 10px 15px;
-  font-size: ${textSizes['16']};
-  border: 1px solid ${colors.gray_300};
-  border-radius: 8px;
-  transition: border-color 0.3s ease;
-
-  &:focus {
-    border-color: ${colors.primary};
-    outline: none;
-  }
-`;
 

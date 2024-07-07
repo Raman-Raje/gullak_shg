@@ -12,7 +12,11 @@ import SignInPage from "@pages/Public/SignInPage";
 
 // context
 import { useDispatch } from "react-redux";
+import { useNavigate } from "react-router-dom";
 import { fetchUserProfile } from "@store/slices/profileSlice";
+
+// Capacitor
+import { Capacitor } from '@capacitor/core';
 
 const AuthContext = createContext({})
 
@@ -22,6 +26,7 @@ export const AuthProvider = () => {
     const [user_id, setUser_id] = useState(null)
     const dispatch = useDispatch();
     const [loading, setLoading] = useState(true)
+    const navigate = useNavigate();
 
     useEffect(() => {
         const fetchSession = async () => {
@@ -50,6 +55,33 @@ export const AuthProvider = () => {
 
         return () => subscription.unsubscribe();
     }, [dispatch]);
+
+    useEffect(() => {
+        const handleDeepLink = async (event) => {
+            if (event.url && event.url.startsWith('myapp://auth')) {
+                const { data, error } = await supabase.auth.signIn({
+                    provider: 'google',
+                    options: { redirectTo: 'myapp://auth' }
+                });
+
+                if (data) {
+                    navigate('/');
+                } else {
+                    console.error('Error signing in:', error);
+                }
+            }
+        };
+
+        if (Capacitor.isNativePlatform()) {
+            Capacitor.App.addListener('appUrlOpen', handleDeepLink);
+        }
+
+        return () => {
+            if (Capacitor.isNativePlatform()) {
+                Capacitor.App.removeListener('appUrlOpen', handleDeepLink);
+            }
+        };
+    }, []);
 
     if (loading) {
         return (
