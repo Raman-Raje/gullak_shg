@@ -37,7 +37,7 @@ const AppLayout = () => {
 
     return (
         <div ref={appRef}>
-            <Routes basename={"/gullak_shg"}>
+            <Routes>
                 <Route element={<AuthProvider />}>
                     <Route element={<AuthenticatedLayout />}>
                         <Route path="/" element={<HomePage />} />
