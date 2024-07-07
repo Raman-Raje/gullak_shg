@@ -59,15 +59,12 @@ export const AuthProvider = () => {
     useEffect(() => {
         const handleDeepLink = async (event) => {
             if (event.url && event.url.startsWith('myapp://auth')) {
-                const { data, error } = await supabase.auth.signIn({
-                    provider: 'google',
-                    options: { redirectTo: 'myapp://auth' }
-                });
+                const { error } = await supabase.auth.getSessionFromUrl({ url: event.url });
 
-                if (data) {
+                if (!error) {
                     navigate('/');
                 } else {
-                    console.error('Error signing in:', error);
+                    console.error('Error getting session from URL:', error);
                 }
             }
         };
@@ -81,7 +78,7 @@ export const AuthProvider = () => {
                 Capacitor.App.removeListener('appUrlOpen', handleDeepLink);
             }
         };
-    }, []);
+    }, [navigate]);
 
     if (loading) {
         return (
